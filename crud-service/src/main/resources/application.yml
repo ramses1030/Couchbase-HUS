@@ -1,0 +1,15 @@
+server:
+  port: 8080
+
+spring:
+  couchbase:
+    connection-string: couchbase://ec2-3-135-190-157.us-east-2.compute.amazonaws.com,ec2-3-140-197-180.us-east-2.compute.amazonaws.com,ec2-3-133-125-150.us-east-2.compute.amazonaws.com
+    username: appuser
+    password: couchbase
+  data:
+    couchbase:
+      bucket-name: appdata
+
+app:
+  scope: crud
+  collection: items
