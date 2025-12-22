@@ -1,20 +1,17 @@
 package com.example.crud_service.service;
 
 import com.couchbase.client.java.Collection;
-import com.couchbase.client.java.kv.GetResult;
+//import com.couchbase.client.java.kv.GetResult;
 import com.couchbase.client.java.query.QueryResult;
-// removed incorrect import
 import com.example.crud_service.model.Item;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.core.error.DocumentExistsException;
 import com.couchbase.client.core.error.DocumentNotFoundException;
 import com.example.crud_service.exception.NotFoundException;
 import com.example.crud_service.exception.ConflictException;
-
 import java.util.List;
-
 import org.springframework.stereotype.Service;
-import com.couchbase.client.core.error.DocumentNotFoundException;
+//import com.couchbase.client.core.error.DocumentNotFoundException;
 
 @Service
 public class ItemService {

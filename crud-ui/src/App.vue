@@ -1,15 +1,55 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, onUnmounted } from 'vue'
 import { getItems, getItem, createItem, deleteItem } from './services/itemService'
 import logo from './assets/images/hus2.jpg'
-import couchbaseLogo from './assets/images/png-transparent-couchbase-hd-logo.png' 
+import couchbaseLogo from './assets/images/png-transparent-couchbase-hd-logo.png'
+import Login from './components/Login.vue'
+import authService from './services/authService'
+import api from './services/api'
+import logoutGif from './assets/logout.svg'
+
+// Autenticación
+const isAuthenticated = ref(authService.isAuthenticated())
+
+// Mostrar última sesión y overlay de logout
+const lastLoginDisplay = ref(null)
+const showLogoutOverlay = ref(false)
+const logoutTime = ref(null)
+const LOGOUT_SHOW_MS = 1200
+const formatTs = (v) => v ? new Date(v).toLocaleString() : ''
+
+// Token actual (estado)
+const currentToken = ref(authService.getToken())
+
+
+if (isAuthenticated.value) {
+  const token = authService.getToken()
+  if (token) api.defaults.headers.common['Authorization'] = `Bearer ${token}`
+}
+
+const onLoginSuccess = (e) => {
+  // Soportar tanto CustomEvent (window) como emit del componente (payload directo)
+  const payload = e?.detail ?? e
+  const token = payload?.token ?? payload
+  const previousLoginISO = payload?.previousLogin
+  if (token) {
+    api.defaults.headers.common['Authorization'] = `Bearer ${token}`
+    currentToken.value = token
+    isAuthenticated.value = true
+    // Mostrar último login en la cabecera (si existe)
+    lastLoginDisplay.value = previousLoginISO ? formatTs(previousLoginISO) : null
+    // Cargar items al iniciar sesión
+    loadItems()
+  }
+}
+
+window.addEventListener('login-success', onLoginSuccess)
+onUnmounted(() => window.removeEventListener('login-success', onLoginSuccess))
 
 const items = ref([])
-
 const id = ref('')
 const name = ref('')
 const description = ref('')
-
 const showDeleteModal = ref(false)
 const itemToDelete = ref(null)
 const errorMsg = ref('')
@@ -36,10 +76,24 @@ const logoLoaded = ref(true)
 const couchLogoLoaded = ref(true)
 const idTouched = ref(false)
 
+// Modal / control para IDs duplicados
+const showDuplicateModal = ref(false)
+const duplicateId = ref(null)
+
 const isIdValid = computed(() => {
   const raw = id.value?.toString().trim()
   return !!raw && /^\d+$/.test(raw)
 })
+
+const idAlreadyExists = computed(() => {
+  const raw = id.value?.toString().trim()
+  if (!raw) return false
+  return items.value.some(it => it.id?.toString() === raw)
+})
+
+const closeDuplicateModal = () => { showDuplicateModal.value = false; duplicateId.value = null }
+const clearIdAndClose = () => { id.value = ''; closeDuplicateModal() }
+const reloadListAndClose = async () => { await loadItems(); closeDuplicateModal() }
 
 const sanitizeId = (e) => {
   // elimina cualquier caracter que no sea dígito
@@ -75,6 +129,15 @@ const addItem = async () => {
   if (!id.value?.toString().trim() || !name.value?.trim() || !description.value?.trim() || !isIdValid.value) {
     showNotification('danger', 'Completa los 3 campos y asegúrate de que el ID sea un número entero', 'bi bi-exclamation-circle-fill')
     idTouched.value = true
+    return
+  }
+
+  // Verificar duplicado localmente antes de crear
+  if (idAlreadyExists.value) {
+    duplicateId.value = id.value
+    idTouched.value = true
+    showDuplicateModal.value = true
+    showNotification('danger', `El ID ${id.value} ya existe`, 'bi bi-exclamation-triangle-fill')
     return
   }
 
@@ -153,20 +216,53 @@ const confirmDelete = async () => {
   }
 }
 
-onMounted(loadItems)
+onMounted(() => { if (isAuthenticated.value) loadItems() })
+
+const logout = () => {
+  const now = new Date().toISOString()
+  localStorage.setItem('crud_ui_last_logout', now)
+  logoutTime.value = now
+  showLogoutOverlay.value = true
+  setTimeout(() => { showLogoutOverlay.value = false }, LOGOUT_SHOW_MS)
+
+  authService.logout()
+  delete api.defaults.headers.common['Authorization']
+  currentToken.value = null
+  isAuthenticated.value = false
+  items.value = []
+} 
 </script>
 
 <template>
-  <div class="container py-4">
+  <div>
+    <!-- Overlay de cierre de sesión (fuera de la sección autenticada) -->
+    <div v-if="showLogoutOverlay" class="logout-full-overlay" @click="showLogoutOverlay = false">
+      <div class="logout-center">
+        <img :src="logoutGif" alt="logout" class="logout-gif" />
+        <div class="logout-text fw-bold text-white mt-2">Sesión cerrada</div>
+        <div class="small text-white mt-1">{{ formatTs(logoutTime) }}</div>
+      </div>
+    </div>
+
+    <Login v-if="!isAuthenticated" @login-success="onLoginSuccess" />
+
+    <div v-else class="container py-4">
     <div class="d-flex align-items-center justify-content-between mb-3">
       <div class="d-flex align-items-center">
         <img v-if="logoLoaded" :src="logo" alt="Logo" class="app-logo me-2" @error="onLogoError" />
         <div v-else class="app-logo placeholder me-2">Logo</div>
-        <h2 class="mb-0">CRUD Items</h2>
-      </div> 
-      <button class="btn btn-outline-primary" @click="loadItems" :disabled="creating || deleting || reloading">
-        <i :class="['bi','bi-arrow-clockwise','me-1',{ rotating: reloading }]" aria-hidden="true"></i> Recargar
-      </button> 
+        <div>
+          <h2 class="mb-0">CRUD Items</h2>
+          <div v-if="lastLoginDisplay" class="small text-muted">Último inicio: {{ lastLoginDisplay }}</div>
+        </div>
+      </div>
+
+      <div class="d-flex">
+        <button class="btn btn-outline-primary" @click="loadItems" :disabled="creating || deleting || reloading">
+          <i :class="['bi','bi-arrow-clockwise','me-1',{ rotating: reloading }]" aria-hidden="true"></i> Recargar
+        </button>
+        <button class="btn btn-outline-secondary ms-2" v-if="isAuthenticated" @click="logout">Cerrar sesión</button>
+      </div>
     </div>
 
     <div v-if="errorMsg" class="alert alert-danger">
@@ -192,6 +288,7 @@ onMounted(loadItems)
             <label class="form-label">ID</label>
             <input class="form-control" v-model="id" @input="sanitizeId" @blur="idTouched = true" placeholder="Ej: 50" />
             <div v-if="idTouched && !isIdValid" class="form-text text-danger">El ID debe contener solo dígitos enteros</div>
+            <div v-if="idTouched && isIdValid && idAlreadyExists" class="form-text text-danger">El ID ya existe</div>
           </div>
           <div class="col-md-4">
             <label class="form-label">Nombre</label>
@@ -273,6 +370,33 @@ onMounted(loadItems)
 
                   <!-- Backdrop -->
                   <div v-if="showDeleteModal" class="modal-backdrop fade show"></div>
+
+                  <!-- Modal: ID duplicado -->
+                  <div v-if="showDuplicateModal" class="modal fade show d-block" tabindex="-1">
+                    <div class="modal-dialog">
+                      <div class="modal-content">
+                        <div class="modal-header">
+                          <h5 class="modal-title">ID duplicado</h5>
+                          <button type="button" class="btn-close" @click="closeDuplicateModal"></button>
+                        </div>
+
+                        <div class="modal-body">
+                          <p>El ID <strong>{{ duplicateId }}</strong> ya existe.</p>
+                          <p class="text-muted mb-0">Puedes cambiar el ID, vaciar el campo o recargar la lista.</p>
+                        </div>
+
+                        <div class="modal-footer">
+                          <button class="btn btn-secondary" @click="closeDuplicateModal">Cerrar</button>
+                          <button class="btn btn-light" @click="clearIdAndClose">Vaciar campo</button>
+                          <button class="btn btn-primary" @click="reloadListAndClose" :disabled="reloading">
+                            <span v-if="reloading" class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                            Recargar lista
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div v-if="showDuplicateModal" class="modal-backdrop fade show"></div>
                 </td>
               </tr>
             </tbody>
@@ -283,6 +407,7 @@ onMounted(loadItems)
 
       <img v-if="couchLogoLoaded" :src="couchbaseLogo" alt="Couchbase" class="couchbase-logo" @error="onCouchLogoError" />
       <div v-else class="couchbase-logo placeholder">Couchbase</div>
+    </div>
   </div>
 </template>
 
@@ -402,4 +527,10 @@ onMounted(loadItems)
   border: 1px dashed rgba(0,0,0,0.06);
   box-shadow: 0 6px 14px rgba(0,0,0,0.06);
 }
+
+.logout-full-overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.54); z-index: 2000; }
+.logout-center { display: flex; flex-direction: column; align-items: center; padding: 18px 22px; border-radius: 10px; }
+.logout-gif { width: 120px; height: auto; }
+.logout-text { font-size: 1.05rem; }
 </style>
+.logout-overlay { position: fixed; left: 50%; transform: translateX(-50%); top: 18px; z-index: 2000; background: rgba(0,0,0,0.75); }
